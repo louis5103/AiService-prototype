@@ -1,0 +1,24 @@
+[project]
+name = "gemini-agent-mcp"
+version = "0.1.0"
+description = "AI Agent System with Streamlit, FastAPI, MCP, and Google Gemini"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.109.0",         # 백엔드 API 서버
+    "uvicorn[standard]>=0.27.0", # ASGI 서버 (uvloop 포함)
+    "streamlit>=1.30.0",        # 프론트엔드 UI
+    "openai>=1.10.0",           # Gemini와 통신할 HTTP 클라이언트 (호환 모드)
+    "mcp>=0.1.0",               # Model Context Protocol SDK
+    "python-dotenv>=1.0.0",     # .env 환경변수 로드
+    "requests>=2.31.0",         # Streamlit에서 백엔드 호출용
+    "httpx>=0.26.0",            # 비동기 HTTP 통신 (OpenAI 라이브러리 내부 의존성)
+    "starlette",                # MCP 서버(SSE) 구축 시 직접 참조됨
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
