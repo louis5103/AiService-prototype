@@ -81,7 +81,17 @@ async def run_ai_agent(user_query: str) -> str:
             }
         })
 
-    messages = [{"role": "user", "content": user_query}]
+    # 시스템 프롬프트
+    # 모델에게 "도구가 필요 없으면 그냥 대화해"라고 명시적으로 지시합니다.
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a helpful AI assistant. You have access to tools, but you should only use them when necessary. If the user asks a general question (like 'Hi' or 'What is Python?'), answer directly without using tools."
+        },
+        {"role": "user", "content": user_query}
+    ]
+
+    print(f"🚀 [Agent] Sending query to Gemini: {user_query}")  # 로그 추가
 
     # 2. Gemini 1차 추론 (Reasoning)
     response = await client.chat.completions.create(
@@ -92,9 +102,11 @@ async def run_ai_agent(user_query: str) -> str:
     )
 
     message = response.choices[0].message
+    print(f"🧐 [Agent] First Response: Content={message.content}, Tool_Calls={message.tool_calls}")  # 디버깅 로그
 
     # 3. 도구 호출 필요 여부 확인
     if message.tool_calls:
+        print("🛠️ [Agent] Tool usage detected!")
         for tool_call in message.tool_calls:
             func_name = tool_call.function.name
             func_args = json.loads(tool_call.function.arguments)
@@ -115,6 +127,12 @@ async def run_ai_agent(user_query: str) -> str:
             model="gemini-2.5-flash-lite",
             messages=messages
         )
-        return final_response.choices[0].message.content
+        return final_response.choices[0].message.content or "Error: Empty response after tool use."
 
-    return message.content
+    # 도구 호출이 없는 경우 (일반 대화)
+    # message.content가 None일 수 있으므로 안전하게 처리
+    if message.content:
+        return message.content
+
+    # 만약 도구도 안 부르고 내용도 없을 때.
+    return "🤔 AI가 응답을 생성하지 못했습니다. (Content is None)"

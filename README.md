@@ -34,7 +34,7 @@ gemini_agent_project/
 
 ## Terminal 2 (FastAPI 백엔드 - 포트 8000)
 ```Bash
-    uv run python -m app.api.agent
+    uv run python -m app.api.main
 ```
 
 ## Terminal 3 (Streamlit 프론트엔드 - 포트 8501)

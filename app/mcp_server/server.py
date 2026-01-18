@@ -5,6 +5,7 @@ from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.requests import Request
+from starlette.responses import Response
 
 # 도구 로직 임포트
 from app.mcp_server.tools import calculate_sum, get_system_status
@@ -62,11 +63,12 @@ async def handle_call_tool(
     raise ValueError(f"Unknown tool: {name}")
 
 
-# 4. SSE 전송 계층 설정 (기존과 동일)
+# 4. SSE 전송 계층 설정
 sse = SseServerTransport("/messages")
 
 
 async def handle_sse(request: Request):
+    """Client(Agent) 접속용 SSE 엔드포인트"""
     async with sse.connect_sse(
             request.scope, request.receive, request._send
     ) as streams:
@@ -76,7 +78,10 @@ async def handle_sse(request: Request):
 
 
 async def handle_messages(request: Request):
-    await sse.handle_post_message(request.scope, request.receive, request._send)
+    """Client 명령 수신용 POST 엔드포인트"""
+    # 함수를 실행(await)하지 않고, 함수 객체 자체를 리턴합니다.
+    # Starlette가 이 리턴된 함수를 받아 (scope, receive, send)를 넣고 대신 실행해줍니다.
+    return sse.handle_post_message
 
 
 # 5. 웹 서버 라우팅
