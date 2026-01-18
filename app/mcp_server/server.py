@@ -2,20 +2,22 @@ import uvicorn
 import mcp.types as types
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
-from starlette.applications import Starlette
-from starlette.routing import Route
-from starlette.requests import Request
-from starlette.responses import Response
+from fastapi import FastAPI, Request
 
 # 도구 로직 임포트
 from app.mcp_server.tools import calculate_sum, get_system_status
 
-# 1. MCP Server 인스턴스 생성 (Low-level)
+# 1. FastAPI 앱 초기화
+app = FastAPI(title="Remote Math MCP Server")
+
+# 2. MCP Server 인스턴스 생성
 mcp_server = Server("RemoteMathServer")
 
+# 3. SSE 전송 계층 객체 생성
+sse = SseServerTransport("/messages")
 
-# 2. 도구 목록 정의 (List Tools Handler)
-# 클라이언트(Agent)가 "어떤 도구가 있어?"라고 물어볼 때 응답하는 함수입니다.
+
+# 4. 도구 목록 정의
 @mcp_server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     return [
@@ -36,14 +38,13 @@ async def handle_list_tools() -> list[types.Tool]:
             description="시스템 상태를 확인합니다.",
             inputSchema={
                 "type": "object",
-                "properties": {},  # 입력 인자 없음
+                "properties": {},
             },
         ),
     ]
 
 
-# 3. 도구 실행 핸들러 (Call Tool Handler)
-# 클라이언트(Agent)가 "이 도구 실행해줘"라고 요청할 때 처리하는 함수입니다.
+# 5. 도구 실행 핸들러
 @mcp_server.call_tool()
 async def handle_call_tool(
         name: str, arguments: dict | None
@@ -51,24 +52,22 @@ async def handle_call_tool(
     if name == "add":
         if not arguments:
             raise ValueError("Arguments required for add")
-        # tools.py의 함수 호출
         result = calculate_sum(arguments["a"], arguments["b"])
         return [types.TextContent(type="text", text=str(result))]
 
     elif name == "status":
-        # tools.py의 함수 호출
         result = get_system_status()
         return [types.TextContent(type="text", text=result)]
 
     raise ValueError(f"Unknown tool: {name}")
 
 
-# 4. SSE 전송 계층 설정
-sse = SseServerTransport("/messages")
-
+# ---------------------------------------------------------------------
+# ⚠️ 중요 수정 사항: 엔드포인트 정의 방식 변경
+# ---------------------------------------------------------------------
 
 async def handle_sse(request: Request):
-    """Client(Agent) 접속용 SSE 엔드포인트"""
+    """Client 접속용 SSE 엔드포인트"""
     async with sse.connect_sse(
             request.scope, request.receive, request._send
     ) as streams:
@@ -78,19 +77,18 @@ async def handle_sse(request: Request):
 
 
 async def handle_messages(request: Request):
-    """Client 명령 수신용 POST 엔드포인트"""
-    # 함수를 실행(await)하지 않고, 함수 객체 자체를 리턴합니다.
-    # Starlette가 이 리턴된 함수를 받아 (scope, receive, send)를 넣고 대신 실행해줍니다.
+    """
+    Client 명령 수신용 엔드포인트 (Raw ASGI 방식)
+    request 객체를 거치지 않고, MCP 라이브러리가 직접 소켓 입출력을 제어하게 합니다.
+    """
+    # return이 아니라 await로 직접 실행해야 합니다!
     return sse.handle_post_message
 
 
-# 5. 웹 서버 라우팅
-routes = [
-    Route("/sse", endpoint=handle_sse),
-    Route("/messages", endpoint=handle_messages, methods=["POST"]),
-]
-
-app = Starlette(routes=routes)
+# 라우트 등록
+app.add_route("/sse", handle_sse, methods=["GET"])
+app.add_route("/messages", handle_messages, methods=["POST"])
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    # worker가 1개여야 메모리 공유가 안전합니다.
+    uvicorn.run(app, host="0.0.0.0", port=8081, workers=1)
