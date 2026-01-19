@@ -1,42 +1,83 @@
 import streamlit as st
 import requests
+from datetime import datetime, timedelta  # 날짜 계산용
 
-# 백엔드 API 주소
-BACKEND_URL = "http://localhost:8000/chat"
+# ... (기본 설정 동일) ...
 
-st.set_page_config(page_title="Gemini Agent", page_icon="🤖")
-st.title("🤖 Gemini Agent with MCP Tools")
+# --- [사이드바: 강력해진 필터] ---
+with st.sidebar:
+    st.header("🔍 상세 검색 필터")
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+    # 1. 카테고리
+    category_options = ["전체", "소설/시/희곡", "경제경영", "자기계발", "인문학", "과학", "컴퓨터/모바일"]
+    selected_category = st.selectbox("📂 카테고리", category_options)
 
-# 기존 대화 표시
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    # 2. 가격
+    max_price = st.slider("💰 최대 가격", 0, 100000, 0, 5000, format="%d원")
 
-# 입력창
-if prompt := st.chat_input("무엇을 도와드릴까요?"):
-    # 사용자 메시지 UI 표시
-    st.chat_message("user").markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    # 3. [NEW] 평점 (최소 점수)
+    min_rating = st.slider("⭐ 최소 평점", 0.0, 10.0, 8.0, 0.5)
+    st.caption(f"평점 {min_rating}점 이상의 책만 검색합니다.")
 
-    # 백엔드 호출
-    with st.spinner("Agent is thinking..."):
-        try:
-            response = requests.post(
-                BACKEND_URL,
-                json={"query": prompt}
-            )
+    # 4. [NEW] 출간일 (최신순)
+    pub_date_option = st.selectbox(
+        "📅 출간 기간",
+        ["전체 기간", "최근 3개월", "최근 6개월", "최근 1년", "최근 3년"]
+    )
 
-            if response.status_code == 200:
-                answer = response.json().get("response", "No response")
-            else:
-                answer = f"Error {response.status_code}: {response.text}"
+    # 날짜 계산 로직
+    min_pub_date_str = None
+    if pub_date_option != "전체 기간":
+        today = datetime.now()
+        days_map = {
+            "최근 3개월": 90,
+            "최근 6개월": 180,
+            "최근 1년": 365,
+            "최근 3년": 365 * 3
+        }
+        delta = days_map.get(pub_date_option, 0)
+        target_date = today - timedelta(days=delta)
+        min_pub_date_str = target_date.strftime("%Y-%m-%d")  # "2023-05-20" 형식
 
-        except requests.exceptions.ConnectionError:
-            answer = "⚠️ 백엔드 서버(Port 8000)에 연결할 수 없습니다."
+    st.divider()
 
-    # AI 응답 UI 표시
-    st.chat_message("assistant").markdown(answer)
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+    # [디버깅] 전송될 필터 미리보기
+    filters_debug = []
+    if selected_category != "전체": filters_debug.append(f"분야={selected_category}")
+    if max_price > 0: filters_debug.append(f"가격<={max_price}")
+    if min_rating > 0: filters_debug.append(f"평점>={min_rating}")
+    if min_pub_date_str: filters_debug.append(f"출간일>={min_pub_date_str}")
+
+    if filters_debug:
+        st.code(" | ".join(filters_debug), language="text")
+    else:
+        st.text("(설정된 필터 없음)")
+
+    if st.button("🗑️ 초기화", type="primary"):
+        st.session_state.messages = []
+        st.rerun()
+
+
+# --- [메시지 전송 함수] ---
+def send_query(text_input):
+    st.session_state.messages.append({"role": "user", "content": text_input})
+
+    # 필터 조합 (Stealth Context Injection)
+    filter_list = []
+    if selected_category != "전체":
+        filter_list.append(f"category_name='{selected_category}'")
+    if max_price > 0:
+        filter_list.append(f"max_price={max_price}")
+    # [NEW] 평점/날짜 추가
+    if min_rating > 0:
+        filter_list.append(f"min_rating={min_rating}")
+    if min_pub_date_str:
+        filter_list.append(f"min_pub_date='{min_pub_date_str}'")
+
+    if filter_list:
+        filter_str = ", ".join(filter_list)
+        final_query = f"{text_input} (System Context: User UI Filters -> {filter_str})"
+    else:
+        final_query = text_input
+
+    # ... (이하 전송 로직 동일) ...

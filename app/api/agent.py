@@ -1,106 +1,106 @@
 import os
 import json
-from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from openai import OpenAI
 from mcp import ClientSession
 
-# 환경 변수 로드
+# 스키마 임포트
+from app.api.schemas import ChatMessage
+from dotenv import load_dotenv
+
+# .env 로드
 load_dotenv()
 
+# 환경변수 로드
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-
-
-if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY is not set in .env file")
-
-# LLM 클라이언트 설정 (Google Gemini)
-client = AsyncOpenAI(
+client = OpenAI(
     api_key=GEMINI_API_KEY,
-    base_url=GEMINI_BASE_URL
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
-# ✅ 전역 MCP 세션 변수
-mcp_session: ClientSession | None = None
+SYSTEM_PROMPT = """
+당신은 알라딘 서점의 유능한 AI 사서입니다. 
+사용자의 질문을 분석하여 [맥락 추천]과 [키워드 검색]을 구분하고, 
+대화 속에 숨겨진 [필터 조건]을 추출하여 도구를 호출하세요.
+
+[도구 사용 전략]
+1. 'search_books' 도구 호출 시:
+   - search_type="context": "재밌는 소설 추천해줘", "자바 공부하고 싶은데" (의미/추천)
+   - search_type="keyword": "한강 작가 책 찾아줘", "토비의 스프링" (정확한 검색)
+   - filters: 사용자가 "3만원 이하", "IT 분야" 등을 언급하면 {'max_price': 30000} 처럼 포함.
+
+2. 'get_details' 도구:
+   - 특정 책의 상세 정보(재고, 리뷰 등)가 필요할 때 ISBN으로 호출.
+
+[답변 스타일]
+- 친절하고 전문적인 사서처럼 답변하세요.
+"""
 
 
-async def run_ai_agent(user_query: str) -> str:
-    """사용자 질문을 받아 Gemini + MCP 도구를 활용해 답변을 생성합니다."""
-    global mcp_session
-
-    if not mcp_session:
-        return "⚠️ Error: MCP Server is not connected. Please check backend logs."
-
+async def run_ai_agent(user_query: str, chat_history: list[ChatMessage], session: ClientSession) -> str:
+    """
+    main.py에서 연결된 session을 인자로 받아 로직을 수행합니다.
+    """
     try:
-        # 1. 도구 목록 조회
-        print("🔍 [Agent] Fetching tools list...")
-        tools_list = await mcp_session.list_tools()
+        # 1. 도구 목록 가져오기
+        mcp_tools = await session.list_tools()
+        openai_tools = [{
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.inputSchema
+            }
+        } for tool in mcp_tools.tools]
 
-        openai_tools = []
-        for tool in tools_list.tools:
-            openai_tools.append({
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.inputSchema
-                }
-            })
+        # 2. 메시지 구성
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        for msg in chat_history:
+            messages.append({"role": msg.role, "content": msg.content})
 
-        # 시스템 프롬프트
-        messages = [
-            {
-                "role": "system",
-                "content": "You are a helpful AI assistant. You have access to tools, but you should only use them when necessary. If the user asks a general question (like 'Hi' or 'What is Python?'), answer directly without using tools."
-            },
-            {"role": "user", "content": user_query}
-        ]
+        # 현재 질문 추가
+        messages.append({"role": "user", "content": user_query})
 
-        print(f"🚀 [Agent] Sending query to Gemini: {user_query}")
-
-        # 2. Gemini 1차 추론 (Reasoning)
-        response = await client.chat.completions.create(
-            model="gemini-2.5-flash-lite",
+        # 3. 1차 LLM 호출
+        response = client.chat.completions.create(
+            model="gemini-2.0-flash-exp",
             messages=messages,
             tools=openai_tools,
-            tool_choice="auto"
         )
 
-        message = response.choices[0].message
-        print(f"🧐 [Agent] First Response: Content={message.content}, Tool_Calls={message.tool_calls}")
+        assistant_msg = response.choices[0].message
 
-        # 3. 도구 호출 필요 여부 확인
-        if message.tool_calls:
-            print("🛠️ [Agent] Tool usage detected!")
-            for tool_call in message.tool_calls:
-                func_name = tool_call.function.name
-                func_args = json.loads(tool_call.function.arguments)
+        # 4. 도구 호출 확인
+        if assistant_msg.tool_calls:
+            messages.append(assistant_msg)  # 대화 맥락 유지
 
-                # MCP 서버로 도구 실행 요청
-                print(f"   -> Calling tool: {func_name} with {func_args}")
-                result = await mcp_session.call_tool(func_name, arguments=func_args)
+            for tool_call in assistant_msg.tool_calls:
+                tool_name = tool_call.function.name
+                try:
+                    tool_args = json.loads(tool_call.function.arguments)
+                except:
+                    tool_args = {}
 
-                # 대화 기록에 추가
-                messages.append(message)
+                print(f"🤖 [Agent] Tool Call: {tool_name} | Args: {tool_args}")
+
+                # MCP 도구 실행
+                result = await session.call_tool(tool_name, arguments=tool_args)
+                tool_output = result.content[0].text
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": str(result.content)
+                    "content": tool_output
                 })
 
-            # 4. 도구 결과를 포함하여 최종 답변 생성
-            final_response = await client.chat.completions.create(
-                model="gemini-2.5-flash-lite",
+            # 5. 최종 답변 생성
+            final_res = client.chat.completions.create(
+                model="gemini-2.0-flash-exp",
                 messages=messages
             )
-            return final_response.choices[0].message.content or "Error: Empty response after tool use."
+            return final_res.choices[0].message.content
 
-        # 도구 호출이 없는 경우 (일반 대화)
-        if message.content:
-            return message.content
-
-        return "🤔 AI가 응답을 생성하지 못했습니다. (Content is None)"
+        return assistant_msg.content
 
     except Exception as e:
-        print(f"❌ [Agent Error] {e}")
-        return f"An error occurred while processing your request: {e}"
+        print(f"❌ Agent Error: {e}")
+        return "죄송합니다. 처리 중 오류가 발생했습니다."
