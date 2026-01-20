@@ -118,6 +118,13 @@ def run_continuous_batch():
                 isbn = book.get('isbn13')
                 if not isbn: continue
 
+                # [수정] 날짜 문자열("2023-01-01")을 숫자(20230101)로 변환
+                raw_date = book.get('pubDate', '')
+                pub_date_int = 0
+                if raw_date:
+                    # "-" 제거 후 정수 변환 (예: "2023-10-25" -> 20231025)
+                    pub_date_int = int(raw_date.replace("-", ""))
+
                 # 메타데이터 구성
                 meta = {
                     "isbn": isbn,
@@ -126,7 +133,8 @@ def run_continuous_batch():
                     "category": book.get('categoryName', ''),
                     "price": book.get('priceSales', 0),
                     "link": book.get('link', ''),
-                    "rating": float(book.get('customerReviewRank', 0))
+                    "rating": float(book.get('customerReviewRank', 0)),
+                    "pub_date": pub_date_int  # 👈 [추가] 숫자형 날짜 저장
                 }
 
                 ids.append(isbn)

@@ -28,8 +28,13 @@ def _build_chroma_filter(filters: dict) -> dict:
         conditions.append({"category": filters["category_name"]})
     if filters.get("min_rating"):
         conditions.append({"rating": {"$gte": float(filters["min_rating"])}})
+
+    # [수정] 날짜 필터 처리 (String -> Int 변환)
     if filters.get("min_pub_date"):
-        conditions.append({"pub_date": {"$gte": filters["min_pub_date"]}})
+        # "2023-01-21" 같은 문자열에서 하이픈 제거 후 숫자로 변환
+        date_str = filters["min_pub_date"].replace("-", "")
+        if date_str.isdigit():
+            conditions.append({"pub_date": {"$gte": int(date_str)}})
 
     if not conditions: return None
     if len(conditions) == 1: return conditions[0]
