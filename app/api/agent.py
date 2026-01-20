@@ -8,11 +8,11 @@ from app.api.schemas import ChatMessage
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv(dotenv_path=BASE_DIR / ".env")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 client = OpenAI(
-    api_key=GEMINI_API_KEY,
-    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+    api_key=GROQ_API_KEY,  # 1. Groq API 키로 변경
+    base_url="https://api.groq.com/openai/v1"  # 2. Groq 공식 엔드포인트
 )
 
 SYSTEM_PROMPT = """
@@ -44,7 +44,10 @@ async def run_ai_agent(user_query: str, chat_history: list[ChatMessage], session
                    [{"role": "user", "content": user_query}]
 
         response = client.chat.completions.create(
-            model="gemini-2.0-flash-exp", messages=messages, tools=openai_tools
+            # 3. 모델명 변경 (예: llama-3.3-70b-versatile, llama3-70b-8192 등)
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            tools=openai_tools
         )
         assistant_msg = response.choices[0].message
 
@@ -59,7 +62,8 @@ async def run_ai_agent(user_query: str, chat_history: list[ChatMessage], session
                 messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": result.content[0].text})
 
             final_res = client.chat.completions.create(
-                model="gemini-2.0-flash-exp", messages=messages
+                model="llama-3.3-70b-versatile",  # 👈 여기만 변경!
+                messages=messages
             )
             return final_res.choices[0].message.content
 
