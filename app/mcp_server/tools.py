@@ -42,24 +42,37 @@ def _build_chroma_filter(filters: dict) -> dict:
 
 
 def fetch_realtime_infos(isbns: list) -> dict:
-    """[Hybrid] 여러 ISBN의 최신 정보를 API로 일괄 조회"""
+    """[Hybrid] 여러 ISBN의 최신 정보(가격, 판매지수, 중고재고)를 API로 조회"""
     if not isbns: return {}
     url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
     params = {
         "ttbkey": ALADIN_TTB_KEY,
         "ItemId": ",".join(isbns),
         "ItemIdType": "ISBN13",
-        "Output": "js", "Version": "20131101", "OptResult": "ebookList"
+        "Output": "js",
+        "Version": "20131101",
+        "OptResult": "usedList"  # 👈 [중요] ebookList -> usedList로 변경해야 중고 정보가 옵니다.
     }
     realtime_map = {}
     try:
         res = requests.get(url, params=params, timeout=3)
         data = res.json()
         for item in data.get('item', []):
+            # 중고 정보 파싱 (subInfo -> usedList)
+            sub_info = item.get('subInfo', {})
+            used_list = sub_info.get('usedList', {})
+
+            # 알라딘 직배송 중고 확인
+            aladin_used = used_list.get('aladinUsed', {})
+            used_count = aladin_used.get('itemCount', 0)
+            used_min_price = aladin_used.get('minPrice', 0)
+
             realtime_map[item['isbn13']] = {
                 "price": item.get('priceSales', 0),
                 "sales_point": item.get('salesPoint', 0),
-                "stock": item.get('stockStatus', '')
+                # "stock": item.get('stockStatus', ''), # 새책 재고는 보통 '예약판매' 아니면 다 있음
+                "used_count": used_count,  # 👈 중고 재고 수량
+                "used_price": used_min_price  # 👈 중고 최저가
             }
     except Exception as e:
         print(f"⚠️ 실시간 조회 실패: {e}")
@@ -95,6 +108,7 @@ def search_books_by_context(query_context: str, filters: dict = None) -> str:
         price = meta.get('price', 0)
         sp = meta.get('sales_point', 0)
         badge = "[DB]"
+        used_info_str = ""  # 중고 정보 문자열 초기화
 
         # 실시간 업데이트
         if isbn in realtime_data:
@@ -102,6 +116,14 @@ def search_books_by_context(query_context: str, filters: dict = None) -> str:
             price = rt['price']
             sp = rt['sales_point']
             badge = "✅[실시간]"
+
+            # 👈 [추가] 중고 재고 표시 로직
+            u_count = rt.get('used_count', 0)
+            u_price = rt.get('used_price', 0)
+            if u_count > 0:
+                used_info_str = f" | 📦중고(알라딘): {u_price:,}원 ({u_count}개)"
+            else:
+                used_info_str = " | 🚫중고재고 없음"
 
         # 판매지수 힌트
         sp_hint = ""
@@ -113,14 +135,14 @@ def search_books_by_context(query_context: str, filters: dict = None) -> str:
         info = (
             f"[{i + 1}] {meta['title']} {badge} {sp_hint}\n"
             f"- 저자: {meta['author']} | 분야: {meta['category']}\n"
-            f"- 판매지수: {sp:,} | 가격: {int(price):,}원 | 평점: {meta.get('rating')}\n"
+            # 👇 가격 옆에 중고 정보를 붙여서 보여줍니다.
+            f"- 판매지수: {sp:,} | 새책: {int(price):,}원{used_info_str} | 평점: {meta.get('rating')}\n"
             f"- 출간일: {meta.get('pub_date')}\n"
             f"- 내용: {docs[i][:100]}...\n"
         )
         formatted.append(info)
 
     return "\n".join(formatted)
-
 
 def search_book_specifically(keyword: str, filters: dict = None) -> str:
     # (API 키워드 검색 로직 - 기존과 동일하게 유지)
